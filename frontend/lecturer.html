@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>דשבורד מרצה — מערכת שיעור חכם</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/pocketbase@0.25.1/dist/pocketbase.umd.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+  <style>
+    .console-box { background: #1e1e1e; color: #00ff00; padding: 1rem; border-radius: 5px; height: 150px; overflow-y: auto; font-family: monospace; margin-bottom: 1rem; text-align: left; direction: ltr; }
+  </style>
+</head>
+<body>
+  <main class="container" style="margin-top: 1.5rem;">
+    <header style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1rem;">
+      <h2 style="margin:0;">דשבורד מרצה — ניהול שיעור חכם</h2>
+      <div style="display:flex; gap: 0.5rem;">
+        <button class="contrast outline" onclick="logout()">התנתק</button>
+      </div>
+    </header>
+
+    <article>
+      <div class="grid">
+        <div>
+          <label for="session-title">שם השיעור</label>
+          <input type="text" id="session-title" value="הרצאה 1 - תכנות מונחה עצמים">
+        </div>
+        <div style="display:flex; align-items:end;">
+          <button onclick="openSession()" style="width:100%;">פתח רישום נוכחות</button>
+        </div>
+      </div>
+
+      <div id="projector-box" style="display:none; margin-top:1rem; padding:1.5rem; border:2px solid #0172ad; border-radius:8px; text-align:center;">
+        <div class="grid">
+          <div style="display:flex; flex-direction:column; align-items:center; justify-content:center;">
+            <div id="qrcode"></div>
+            <small id="access-url" style="margin-top:0.5rem; direction:ltr;"></small>
+          </div>
+          <div style="display:flex; flex-direction:column; justify-content:center;">
+            <p style="margin:0;">קוד כיתתי לרישום:</p>
+            <h1 id="class-code-display" style="font-size:4.5rem; margin:0.2rem 0; color:#0172ad;">--</h1>
+            <h3 style="margin:0;">נרשמו בפועל: <span id="live-counter">0</span></h3>
+            <small id="session-status-badge"></small>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <article id="audit-box" style="display:none;">
+      <h4>בקרת כמות היברידית וחישוב דרגת חשד</h4>
+      <div class="grid">
+        <div>
+          <label for="class-photo">העלה תמונת כיתה</label>
+          <input type="file" id="class-photo" accept="image/*" capture="environment">
+        </div>
+        <div style="display:flex; align-items:end;">
+          <button class="secondary" onclick="runVisionAudit()" id="vision-btn" style="width:100%;">ספור ראשים וחשב דרגת חשד</button>
+        </div>
+      </div>
+
+      <div id="audit-result" style="display:none; margin-top:1rem; padding:1rem; border-radius:6px; border:1px solid #cbd5e1;">
+        <p id="suspicion-badge" style="font-weight:bold; font-size:1.1rem; margin-bottom:0.3rem;"></p>
+        <p id="suspicion-explanation" style="margin-bottom:1rem;"></p>
+        <div id="students-levels" style="margin-bottom:1rem;"></div>
+        <div class="grid">
+          <div>
+            <label for="final-headcount">כמות נוכחים סופית (ניתן לעריכה ידנית)</label>
+            <input type="number" id="final-headcount" min="0">
+          </div>
+          <div style="display:flex; align-items:end;">
+            <button onclick="closeSession()" class="contrast" style="width:100%;">אשר וסגור רישום</button>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <article id="interaction-box" style="display:none;">
+      <h4>ניהול כיתה חכם (AI & Interactions)</h4>
+
+      <h5>שאלות סטודנטים (לייב)</h5>
+      <div id="message-console" class="console-box">[SYSTEM] ממתין להודעות סטודנטים...</div>
+
+      <hr>
+
+      <h5>צור סקר מהיר (KISS Poll)</h5>
+      <div class="grid">
+          <input type="text" id="poll-question" placeholder="שאלת הסקר">
+          <input type="text" id="poll-options" placeholder="אפשרויות (מופרדות בפסיק)">
+          <button onclick="createPoll()">צור סקר</button>
+      </div>
+
+      <div id="poll-results-box" style="display:none; margin-top: 1rem; background: #f8f9fa; padding: 1rem; border-radius: 5px; border: 1px solid #dee2e6;">
+          <h6 style="margin-top:0;">תוצאות סקר נוכחי:</h6>
+          <table style="font-size: 0.9rem; margin-bottom: 0;">
+              <thead>
+                  <tr><th>סטודנט</th><th>תשובה</th></tr>
+              </thead>
+              <tbody id="poll-results-tbody"></tbody>
+          </table>
+      </div>
+
+      <hr>
+
+      <h5>סיכום שיעור (AI)</h5>
+      <div class="grid">
+          <input type="file" id="summary-file" accept="video/*,text/plain">
+          <button onclick="summarize()">צור סיכום</button>
+      </div>
+
+      <hr>
+
+      <h5>ביקורת שיעורי בית (CSV)</h5>
+      <div class="grid">
+          <input type="file" id="homework-file" accept=".csv">
+          <button onclick="reviewHomework()">נתח שיעורי בית</button>
+      </div>
+    </article>
+
+    <article id="table-box" style="display:none;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
+        <h4 style="margin:0;">רשימת סטודנטים וסטטוס בזמן אמת</h4>
+        <a id="export-btn" href="#" role="button">ייצוא גיליון CSV / Excel</a>
+      </div>
+      <table>
+        <thead><tr><th>שם סטודנט</th><th>קבוצה</th><th>סטטוס</th><th>רמת אימות</th><th>פעולה ידנית</th></tr></thead>
+        <tbody id="attendance-tbody"></tbody>
+      </table>
+    </article>
+
+    <!-- ===== פיצ'ר 5: ניהול השוואת מטלות (מרצה) ===== -->
+    <article id="repos-admin-section">
+      <header>
+        <h4 style="margin-bottom:0;">השוואת מטלות</h4>
+      </header>
+
+      <p id="repos-status" style="margin-bottom:0.5rem;"></p>
+
+      <section>
+        <label for="repos-csv">1. העלאת קובץ CSV עם קישורי GitHub של כל המטלות</label>
+        <input type="file" id="repos-csv" accept=".csv">
+        <button type="button" class="secondary" onclick="uploadRepos()">העלה קובץ קישורים</button>
+      </section>
+
+      <section>
+        <label for="my-repo-url">2. קישור GitHub למטלה להשוואה</label>
+        <input type="url" id="my-repo-url" placeholder="https://github.com/user/repo">
+        <button type="button" onclick="compareMyRepo()">השווה למטלות אחרות</button>
+      </section>
+
+      <div id="compare-result"></div>
+    </article>
+  </main>
+
+  <script>
+    if (!localStorage.getItem('pb_auth')) { window.location.href = '/'; }
+    function logout() { localStorage.removeItem('pb_auth'); window.location.href = '/'; }
+
+    const pb = new PocketBase(window.location.origin + '/pb');
+    let currentSession = null;
+    let allStudents = [];
+    let currentPollId = null;
+    let pollInterval = null;
+
+    async function loadStudents() {
+      try {
+        let res = await fetch('/api/students/names');
+        allStudents = await res.json();
+        if (allStudents.length === 0) {
+          await fetch('/api/students/seed', { method: 'POST' });
+          res = await fetch('/api/students/names');
+          allStudents = await res.json();
+        }
+      } catch (error) { console.error(error); }
+    }
+
+    async function openSession() {
+      try {
+        const title = document.getElementById('session-title').value;
+        const formData = new FormData(); formData.append('title', title);
+        const res = await fetch('/api/sessions/open', { method: 'POST', body: formData });
+        let data; try { data = await res.json(); } catch (e) { throw new Error("שגיאה פנימית."); }
+        if (!res.ok) return alert('שגיאה: ' + (data.detail || 'לא ידוע'));
+        currentSession = data;
+        await loadStudents();
+        await showSessionUI(currentSession);
+      } catch (err) { alert('שגיאה קריטית: ' + err.message); }
+    }
+
+    async function showSessionUI(session) {
+      document.getElementById('projector-box').style.display = 'block';
+      document.getElementById('audit-box').style.display = 'block';
+      document.getElementById('interaction-box').style.display = 'block';
+      document.getElementById('table-box').style.display = 'block';
+
+      document.getElementById('class-code-display').innerText = session.class_code;
+      document.getElementById('session-status-badge').innerText = `סטטוס: ${session.status}`;
+      document.getElementById('export-btn').href = `/api/sessions/${session.id}/export`;
+
+      let baseUrl = window.location.origin;
+      try { const urlRes = await fetch('/api/public-url'); const urlData = await urlRes.json(); if (urlData.url) baseUrl = urlData.url; } catch (e) {}
+
+      const studentUrl = baseUrl + '/student';
+      document.getElementById('access-url').innerText = studentUrl;
+      const qrDiv = document.getElementById('qrcode'); qrDiv.innerHTML = '';
+      new QRCode(qrDiv, { text: studentUrl, width: 150, height: 150 });
+      renderAttendanceTable();
+    }
+
+    async function renderAttendanceTable() {
+      if (!currentSession) return;
+      try {
+        const records = await pb.collection('attendance').getFullList({ filter: `session_id="${currentSession.id}"` });
+        document.getElementById('live-counter').innerText = records.length;
+        const recMap = {}; records.forEach(r => recMap[r.student_id] = r);
+        const tbody = document.getElementById('attendance-tbody'); tbody.innerHTML = '';
+        allStudents.forEach(st => {
+          const rec = recMap[st.id]; const status = rec ? rec.status : 'ABSENT'; const level = rec ? rec.verification_level : '-';
+          tbody.innerHTML += `<tr><td>${st.name}</td><td>${st.group || '-'}</td><td><strong>${status}</strong></td><td>${level}</td><td><button class="outline" style="padding:0.2rem 0.6rem; font-size:0.85rem;" onclick="manualOverride('${st.id}')">סמן ידנית</button></td></tr>`;
+        });
+      } catch (error) { console.error(error); }
+    }
+
+    async function manualOverride(studentId) {
+      if (!currentSession) return;
+      await fetch(`/api/sessions/${currentSession.id}/override/${studentId}`, { method: 'POST' });
+      await renderAttendanceTable();
+    }
+
+    async function runVisionAudit() {
+      const fileInput = document.getElementById('class-photo');
+      if (!fileInput.files.length) return alert('בחר תמונה.');
+      const btn = document.getElementById('vision-btn'); btn.setAttribute('aria-busy', 'true');
+      const formData = new FormData(); formData.append('photo', fileInput.files[0]);
+      const res = await fetch(`/api/sessions/${currentSession.id}/audit`, { method: 'POST', body: formData });
+      const data = await res.json(); btn.removeAttribute('aria-busy');
+      if (!res.ok) return alert('שגיאה: ' + data.detail);
+
+      document.getElementById('audit-result').style.display = 'block';
+      document.getElementById('final-headcount').value = data.ai_headcount;
+      const colors = { NONE: 'green', LOW: '#0284c7', MEDIUM: '#d97706', HIGH: 'crimson' };
+      const badge = document.getElementById('suspicion-badge');
+      badge.style.color = colors[data.level] || 'black';
+      badge.innerText = `דרגת חשד: ${data.level} | AI: ${data.ai_headcount} | נרשמו: ${data.registered_count} (פער: ${data.delta})`;
+      document.getElementById('suspicion-explanation').innerText = data.explanation;
+      renderStudentLevels(data.students || []);
+    }
+
+    function renderStudentLevels(students) {
+      const box = document.getElementById('students-levels');
+      const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
+        ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+      const labels = { NONE: 'תקין', LOW: 'נמוך', MEDIUM: 'בינוני', HIGH: 'גבוה' };
+      const styles = {
+        NONE:   'background:#d1e7dd; color:#0f5132;',
+        LOW:    'background:#cff4fc; color:#055160;',
+        MEDIUM: 'background:#fff3cd; color:#664d03;',
+        HIGH:   'background:#f8d7da; color:#842029;'
+      };
+
+      if (!students.length) {
+        box.innerHTML = '<p style="color:gray;">אין סטודנטים רשומים בשיעור.</p>';
+        return;
+      }
+
+      const rows = students.map(s => `
+        <tr>
+          <td>${esc(s.student_name)}</td>
+          <td>${s.polls_answered} סקרים, ${s.questions_sent} שאלות</td>
+          <td><span style="${styles[s.level] || ''} padding:0.15rem 0.6rem; border-radius:4px; font-weight:bold;">${labels[s.level] || esc(s.level)}</span></td>
+          <td style="font-size:0.85rem;">${esc(s.explanation)}</td>
+        </tr>`).join('');
+
+      box.innerHTML = `
+        <h6 style="margin-bottom:0.5rem;">דרגת חשד לכל סטודנט</h6>
+        <div style="overflow-x:auto">
+        <table style="font-size:0.9rem;">
+          <thead>
+            <tr><th>סטודנט</th><th>פעילות</th><th>דרגה</th><th>הסבר</th></tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+        </div>`;
+    }
+
+    async function closeSession() {
+      const count = document.getElementById('final-headcount').value || 0;
+      const formData = new FormData(); formData.append('final_headcount', count);
+      const res = await fetch(`/api/sessions/${currentSession.id}/close`, { method: 'POST', body: formData });
+      currentSession = await res.json();
+      document.getElementById('session-status-badge').innerText = `סטטוס: ${currentSession.status}`;
+      alert('הרישום נסגר.');
+    }
+
+    async function createPoll() {
+        const q = document.getElementById('poll-question').value;
+        const opts = document.getElementById('poll-options').value;
+        if (!q || !opts) return alert('מלא שאלה ואפשרויות');
+
+        const formData = new FormData();
+        formData.append('session_id', currentSession.id);
+        formData.append('question', q);
+        formData.append('options', opts);
+
+        const res = await fetch('/api/polls', { method: 'POST', body: formData });
+        if(res.ok){
+            const pollData = await res.json();
+            currentPollId = pollData.id;
+            document.getElementById('poll-results-box').style.display = 'block';
+            document.getElementById('poll-results-tbody').innerHTML = '';
+
+            if (pollInterval) clearInterval(pollInterval);
+            pollInterval = setInterval(fetchPollResults, 2000);
+
+            alert('סקר נוצר ונשלח לסטודנטים!');
+            document.getElementById('poll-question').value = '';
+            document.getElementById('poll-options').value = '';
+        } else {
+            alert('שגיאה ביצירת סקר');
+        }
+    }
+
+    async function fetchPollResults() {
+        if (!currentPollId) return;
+        const res = await fetch(`/api/polls/${currentPollId}/results`);
+        const data = await res.json();
+        const tbody = document.getElementById('poll-results-tbody');
+        tbody.innerHTML = '';
+        data.results.forEach(vote => {
+            tbody.innerHTML += `<tr><td>${vote.student_name || 'אנונימי'}</td><td><strong>${vote.answer}</strong></td></tr>`;
+        });
+    }
+
+    async function summarize() {
+        const file = document.getElementById('summary-file').files[0];
+        const formData = new FormData(); formData.append('session_id', currentSession.id);
+        if (file) formData.append('file', file);
+
+        alert('מייצר סיכום... אנא המתן (עשוי לקחת מספר שניות)');
+
+        try {
+            const res = await fetch('/api/summarize', { method: 'POST', body: formData });
+            const data = await res.json();
+
+            if (!res.ok) throw new Error(data.detail || 'שגיאה ביצירת הסיכום');
+            if (!data.summary) throw new Error('השרת לא החזיר סיכום.');
+
+            const blob = new Blob([data.summary], { type: 'text/markdown' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `summary_${currentSession.id}.md`;
+            a.click();
+        } catch (error) {
+            alert('❌ שגיאה: ' + error.message);
+        }
+    }
+
+    async function reviewHomework() {
+        const file = document.getElementById('homework-file').files[0];
+        if (!file) return alert('בחר קובץ CSV');
+        const formData = new FormData(); formData.append('file', file);
+        alert('בודק שיעורי בית...');
+        const res = await fetch('/api/review-homework', { method: 'POST', body: formData });
+        const data = await res.json();
+        console.log(data.reviews);
+        alert('הבדיקה הסתיימה! התוצאות הודפסו לקונסול (F12).');
+    }
+
+    pb.collection('attendance').subscribe('*', function () { renderAttendanceTable(); });
+    pb.collection('messages').subscribe('*', function (e) {
+        if (e.action === 'create' && e.record.session_id === currentSession?.id) {
+            const consoleBox = document.getElementById('message-console');
+            if (consoleBox.innerHTML.includes("ממתין")) consoleBox.innerHTML = "";
+            consoleBox.innerHTML += `<div>[${e.record.student_name}]: ${e.record.text}</div>`;
+            consoleBox.scrollTop = consoleBox.scrollHeight;
+            document.title = "(!) שאלה חדשה";
+        }
+    });
+
+    (async () => {
+      await loadStudents();
+      const res = await fetch('/api/sessions/active');
+      const data = await res.json();
+      if (data.session) { currentSession = data.session; await showSessionUI(currentSession); }
+    })();
+  </script>
+
+  <script>
+    const escHtml = s => String(s ?? '').replace(/[&<>"']/g, c =>
+      ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+    async function loadReposStatus() {
+      const res = await fetch('/api/repos/status');
+      const data = await res.json();
+      document.getElementById('repos-status').innerText =
+        data.count > 0 ? `מאגר פעיל: ${data.count} מטלות` : 'המאגר ריק. העלה קובץ קישורים.';
+    }
+
+    async function uploadRepos() {
+      const file = document.getElementById('repos-csv').files[0];
+      if (!file) return alert('בחר קובץ CSV');
+
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await fetch('/api/repos/import', { method: 'POST', body: fd });
+      const data = await res.json();
+
+      if (!res.ok) return alert(data.detail || 'שגיאה בהעלאה');
+      alert(`נטענו: ${data.added} חדשים, ${data.updated} עודכנו, ${data.skipped} דולגו`);
+      loadReposStatus();
+    }
+
+    async function compareMyRepo() {
+      const url = document.getElementById('my-repo-url').value.trim();
+      if (!url) return alert('הדבק קישור GitHub למטלה להשוואה');
+
+      const box = document.getElementById('compare-result');
+      box.innerHTML = '<p aria-busy="true">משווה למאגר... (בהרצה הראשונה זה עשוי לקחת כמה דקות)</p>';
+
+      const res = await fetch(`/api/repos/compare?my_repo_url=${encodeURIComponent(url)}`);
+      const data = await res.json();
+
+      if (!res.ok) {
+        box.innerHTML = `<p style="color:crimson">❌ ${escHtml(data.detail)}</p>`;
+        return;
+      }
+
+      const bg = data.flagged ? '#f8d7da' : '#d1e7dd';
+      box.innerHTML = `
+        <table>
+          <thead>
+            <tr><th>ציון דמיון</th><th>מטלות שהושוו</th><th>סטטוס</th></tr>
+          </thead>
+          <tbody>
+            <tr style="background:${bg}">
+              <td><strong>${data.similarity}%</strong></td>
+              <td>${data.compared_count}</td>
+              <td>${data.flagged ? '⚠️ חשד לדמיון' : '✅ תקין'}</td>
+            </tr>
+          </tbody>
+        </table>`;
+    }
+
+    loadReposStatus();
+  </script>
+</body>
+</html>

@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>פורטל סטודנט — שיעור חכם</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/pocketbase@0.25.1/dist/pocketbase.umd.js"></script>
+</head>
+<body>
+  <main class="container" style="max-width: 520px; margin-top: 2rem;">
+
+    <!-- התראה על חוסר אינטרנט -->
+    <div id="offline-banner" style="display:none; background: #ffc107; color: black; padding: 0.5rem; text-align: center; border-radius: 5px; margin-bottom: 1rem; font-weight: bold;">
+        ⚠️ אין חיבור לאינטרנט. ההודעות נשמרות מקומית.
+    </div>
+
+    <article id="attendance-section">
+      <header>
+        <h2 style="margin-bottom: 0;">רישום נוכחות</h2>
+        <small id="session-banner">טוען פרטי שיעור...</small>
+      </header>
+
+      <form id="checkin-form">
+        <label for="student_name">שם מלא</label>
+        <input list="students-list" id="student_name" name="student_name" placeholder="הקלד או בחר" required autocomplete="off">
+        <datalist id="students-list"></datalist>
+
+        <label for="class_code">הקוד הכיתתי שעל המקרן</label>
+        <input type="text" id="class_code" name="class_code" maxlength="4" inputmode="numeric" placeholder="לדוגמה: 98" required>
+
+        <button type="submit" id="submit-btn">אשר נוכחות</button>
+      </form>
+      <footer id="feedback" style="display:none; font-weight: bold; padding: 1rem; border-radius: 5px;"></footer>
+    </article>
+
+    <article id="interaction-section" style="display:none;">
+      <header style="display:flex; justify-content:space-between; align-items:center;">
+        <h3 style="margin:0;">מרכז השיעור החכם</h3>
+        <mark id="student-status-badge" style="font-size:0.8rem;">נוכחות אושרה</mark>
+      </header>
+
+      <section>
+        <h5>שלח שאלה או הצעה למרצה</h5>
+        <textarea id="question-text" placeholder="מה תרצה לשאול?" rows="2" style="margin-bottom:0.5rem;"></textarea>
+        <button onclick="sendQuestion()" style="width:100%;">שלח שאלה</button>
+      </section>
+
+      <hr>
+
+      <section>
+        <h5>סקרים פעילים</h5>
+        <div id="active-polls">
+          <p style="color:gray; font-size:0.9rem;">אין סקרים פעילים כרגע.</p>
+        </div>
+      </section>
+    </article>
+
+    <!-- ===== השוואת המטלה שלי (סטודנט) ===== -->
+    <article id="compare-section">
+      <header>
+        <h4 style="margin-bottom:0;">בדיקת דמיון למטלה שלי</h4>
+        <small>זמין רק אם המרצה העלה את מאגר המטלות</small>
+      </header>
+      <section>
+        <label for="my-repo-url">קישור GitHub למטלה שלי</label>
+        <input type="url" id="my-repo-url" placeholder="https://github.com/user/repo">
+        <button type="button" onclick="compareMyRepo()">בדוק דמיון</button>
+      </section>
+      <div id="compare-result"></div>
+    </article>
+  </main>
+
+<script>
+    const pb = new PocketBase(window.location.origin + '/pb');
+    let currentSessionId = null;
+    let currentStudentId = null;
+    let currentStudentName = null;
+    let activePollId = null;
+
+    // שמירת הסקרים שהסטודנט כבר ענה עליהם
+    let votedPolls = new Set(JSON.parse(localStorage.getItem('voted_polls') || '[]'));
+
+    // --- פונקציות Offline Queue ---
+    function updateOfflineBanner() {
+        document.getElementById('offline-banner').style.display = navigator.onLine ? 'none' : 'block';
+    }
+
+    async function syncPendingMessages() {
+        if (!navigator.onLine) return;
+
+        let pending = JSON.parse(localStorage.getItem('pending_messages') || '[]');
+        if (pending.length === 0) return;
+
+        console.log(`מנסה לסנכרן ${pending.length} הודעות שמורות...`);
+        let remaining = [];
+
+        for (let msg of pending) {
+            try {
+                const formData = new FormData();
+                formData.append('session_id', msg.session_id);
+                formData.append('student_id', msg.student_id);
+                formData.append('student_name', msg.student_name);
+                formData.append('text', msg.text);
+
+                const res = await fetch('/api/messages', { method: 'POST', body: formData });
+                if (!res.ok) throw new Error('Server error');
+            } catch (e) {
+                remaining.push(msg);
+            }
+        }
+
+        localStorage.setItem('pending_messages', JSON.stringify(remaining));
+    }
+
+    window.addEventListener('online', () => { updateOfflineBanner(); syncPendingMessages(); });
+    window.addEventListener('offline', updateOfflineBanner);
+
+    // --- אתחול ---
+    async function init() {
+      updateOfflineBanner();
+      syncPendingMessages();
+
+      try {
+        const sRes = await fetch('/api/sessions/active');
+        const sData = await sRes.json();
+        const banner = document.getElementById('session-banner');
+        const form = document.getElementById('checkin-form');
+
+        if (!sData.session || sData.session.status !== 'OPEN') {
+          banner.innerText = 'רישום הנוכחות סגור כעת.';
+          form.style.display = 'none';
+          return;
+        }
+
+        currentSessionId = sData.session.id;
+
+        const savedSessionId = localStorage.getItem('student_session_id');
+        const savedStudentId = localStorage.getItem('student_id');
+        const savedStudentName = localStorage.getItem('student_name');
+
+        if (savedSessionId === currentSessionId && savedStudentId) {
+            currentStudentId = savedStudentId;
+            currentStudentName = savedStudentName;
+            document.getElementById('attendance-section').style.display = 'none';
+            document.getElementById('interaction-section').style.display = 'block';
+            checkActivePoll();
+            return;
+        }
+
+        banner.innerText = `שיעור פעיל: ${sData.session.title}`;
+
+        const nRes = await fetch('/api/students/names');
+        const names = await nRes.json();
+        const datalist = document.getElementById('students-list');
+        names.forEach(st => {
+          const opt = document.createElement('option');
+          opt.value = st.name;
+          datalist.appendChild(opt);
+        });
+      } catch (err) {
+        console.error("Init error:", err);
+        document.getElementById('session-banner').innerText = "אין חיבור לשרת. נסה לרענן.";
+      }
+    }
+
+    document.getElementById('checkin-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const feedback = document.getElementById('feedback');
+      feedback.style.display = 'block';
+      feedback.innerText = 'מאמת נתונים...';
+
+      const formData = new FormData(e.target);
+
+      try {
+          const res = await fetch('/api/attendance/checkin', { method: 'POST', body: formData });
+          const data = await res.json();
+
+          if (res.ok) {
+            document.getElementById('attendance-section').style.display = 'none';
+            document.getElementById('interaction-section').style.display = 'block';
+
+            currentStudentId = data.record.student_id;
+            currentStudentName = data.record.student_name;
+
+            localStorage.setItem('student_session_id', currentSessionId);
+            localStorage.setItem('student_id', currentStudentId);
+            localStorage.setItem('student_name', currentStudentName);
+
+            checkActivePoll();
+          } else {
+            throw new Error(data.detail);
+          }
+      } catch (err) {
+          feedback.style.background = '#f8d7da';
+          feedback.innerText = `❌ ${err.message || 'שגיאת רשת'}`;
+      }
+    });
+
+    async function sendQuestion() {
+      const text = document.getElementById('question-text').value;
+      if (!text) return alert('נא להקליד שאלה');
+
+      const msgData = {
+          session_id: currentSessionId,
+          student_id: currentStudentId,
+          student_name: currentStudentName,
+          text: text
+      };
+
+      try {
+          if (!navigator.onLine) throw new Error('Offline');
+
+          const formData = new FormData();
+          Object.keys(msgData).forEach(key => formData.append(key, msgData[key]));
+
+          const res = await fetch('/api/messages', { method: 'POST', body: formData });
+          if (!res.ok) throw new Error('Server error');
+
+          alert('השאלה נשלחה למרצה!');
+          document.getElementById('question-text').value = '';
+      } catch (error) {
+          console.log("Offline mode: saving message locally", error);
+
+          let pending = JSON.parse(localStorage.getItem('pending_messages') || '[]');
+          pending.push(msgData);
+          localStorage.setItem('pending_messages', JSON.stringify(pending));
+
+          alert('אין חיבור לאינטרנט. השאלה נשמרה ותישלח אוטומטית כשהחיבור יחזור.');
+          document.getElementById('question-text').value = '';
+      }
+    }
+
+    async function checkActivePoll() {
+      if (!currentSessionId) return;
+      try {
+          const res = await fetch(`/api/polls/active?session_id=${currentSessionId}`);
+          const data = await res.json();
+          const pollDiv = document.getElementById('active-polls');
+
+          if (data.poll) {
+            if (votedPolls.has(data.poll.id)) {
+               if (activePollId !== data.poll.id) {
+                  pollDiv.innerHTML = `<p style="color:green; font-size:0.9rem; font-weight:bold;">✅ הצבעתך נקלטה בסקר זה.</p>`;
+                  activePollId = data.poll.id;
+               }
+               return;
+            }
+
+            if (data.poll.id === activePollId) return;
+            activePollId = data.poll.id;
+
+            let html = `<h6>${data.poll.question}</h6>`;
+            data.poll.options.forEach(opt => {
+              html += `<button class="outline" style="margin-bottom:5px; width:100%;" onclick="vote('${data.poll.id}', '${opt}')">${opt}</button>`;
+            });
+            pollDiv.innerHTML = html;
+          } else {
+            activePollId = null;
+            pollDiv.innerHTML = `<p style="color:gray; font-size:0.9rem;">אין סקרים פעילים כרגע.</p>`;
+          }
+      } catch(e) {}
+    }
+
+    async function vote(pollId, answer) {
+      document.querySelectorAll('#active-polls button').forEach(b => b.disabled = true);
+
+      const formData = new FormData();
+      formData.append('poll_id', pollId);
+      formData.append('student_id', currentStudentId);
+      formData.append('student_name', currentStudentName);
+      formData.append('session_id', currentSessionId);
+      formData.append('answer', answer);
+
+      try {
+          const res = await fetch('/api/polls/vote', { method: 'POST', body: formData });
+          const data = await res.json();
+
+          if(data.status === 'success' || data.message.includes("כבר הצבעת")) {
+              votedPolls.add(pollId);
+              localStorage.setItem('voted_polls', JSON.stringify([...votedPolls]));
+
+              document.getElementById('active-polls').innerHTML = `<p style="color:green; font-size:0.9rem; font-weight:bold;">✅ הצבעתך נקלטה.</p>`;
+              activePollId = pollId;
+          } else {
+              alert(data.message);
+              document.querySelectorAll('#active-polls button').forEach(b => b.disabled = false);
+          }
+      } catch(e) {
+          alert('אין חיבור לאינטרנט. לא ניתן להצביע בסקר כרגע.');
+          document.querySelectorAll('#active-polls button').forEach(b => b.disabled = false);
+      }
+    }
+
+    pb.collection('polls').subscribe('*', function (e) {
+      if (e.action === 'create' && e.record.session_id === currentSessionId) {
+        activePollId = null;
+        checkActivePoll();
+      }
+    });
+
+    setInterval(checkActivePoll, 4000);
+    setInterval(syncPendingMessages, 10000);
+
+    init();
+</script>
+
+<script>
+  async function compareMyRepo() {
+    const url = document.getElementById('my-repo-url').value.trim();
+    if (!url) return alert('הדבק קישור GitHub למטלה שלך');
+
+    const box = document.getElementById('compare-result');
+    box.innerHTML = '<p aria-busy="true">בודק... (עשוי לקחת דקה)</p>';
+
+    const res = await fetch(`/api/student/repos/compare?my_repo_url=${encodeURIComponent(url)}`);
+    const data = await res.json();
+
+    if (!res.ok) {
+      box.innerHTML = `<p style="color:crimson">❌ ${data.detail || 'שגיאה'}</p>`;
+      return;
+    }
+
+    const bg = data.flagged ? '#f8d7da' : '#d1e7dd';
+    const msg = data.flagged
+      ? '⚠️ נמצא דמיון גבוה מהסף. המרצה יקבל עדכון.'
+      : '✅ לא נמצא דמיון חריג.';
+
+    box.innerHTML = `
+      <div style="background:${bg}; padding:1rem; border-radius:6px;">
+        <p style="margin:0;"><strong>דמיון מרבי: ${data.similarity}%</strong> (סף: ${data.threshold}%)</p>
+        <p style="margin:0.5rem 0 0;">${msg}</p>
+      </div>`;
+  }
+</script>
+</body>
+</html>
