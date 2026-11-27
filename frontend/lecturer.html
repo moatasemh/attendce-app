@@ -105,7 +105,7 @@
       <h5>סיכום שיעור (AI)</h5>
       <div class="grid">
           <input type="file" id="summary-file" accept="video/*,text/plain">
-          <button onclick="summarize()">צור סיכום</button>
+          <button id="summary-btn" onclick="summarize()">צור סיכום</button>
       </div>
 
       <hr>
@@ -161,6 +161,7 @@
     let allStudents = [];
     let currentPollId = null;
     let pollInterval = null;
+    let qrPollTimer = null;
 
     async function loadStudents() {
       try {
@@ -197,14 +198,34 @@
       document.getElementById('session-status-badge').innerText = `סטטוס: ${session.status}`;
       document.getElementById('export-btn').href = `/api/sessions/${session.id}/export`;
 
-      let baseUrl = window.location.origin;
-      try { const urlRes = await fetch('/api/public-url'); const urlData = await urlRes.json(); if (urlData.url) baseUrl = urlData.url; } catch (e) {}
+      const renderQr = (baseUrl) => {
+        const studentUrl = baseUrl + '/student';
+        document.getElementById('access-url').innerText = studentUrl;
+        const qrDiv = document.getElementById('qrcode');
+        qrDiv.innerHTML = '';
+        new QRCode(qrDiv, { text: studentUrl, width: 150, height: 150 });
+      };
 
-      const studentUrl = baseUrl + '/student';
-      document.getElementById('access-url').innerText = studentUrl;
-      const qrDiv = document.getElementById('qrcode'); qrDiv.innerHTML = '';
-      new QRCode(qrDiv, { text: studentUrl, width: 150, height: 150 });
+      const syncPublicUrl = async () => {
+        try {
+          const urlRes = await fetch('/api/public-url');
+          const urlData = await urlRes.json();
+          if (urlData.url) {
+            renderQr(urlData.url);
+            if (qrPollTimer) { clearInterval(qrPollTimer); qrPollTimer = null; }
+            return true;
+          }
+        } catch (e) {}
+        return false;
+      };
+
       renderAttendanceTable();
+      const ready = await syncPublicUrl();
+      if (!ready) {
+        document.getElementById('access-url').innerText = 'מתחבר לכתובת ציבורית...';
+        if (qrPollTimer) clearInterval(qrPollTimer);
+        qrPollTimer = setInterval(syncPublicUrl, 1500);
+      }
     }
 
     async function renderAttendanceTable() {
@@ -227,15 +248,32 @@
       await renderAttendanceTable();
     }
 
-    async function runVisionAudit() {
-      const fileInput = document.getElementById('class-photo');
-      if (!fileInput.files.length) return alert('בחר תמונה.');
-      const btn = document.getElementById('vision-btn'); btn.setAttribute('aria-busy', 'true');
-      const formData = new FormData(); formData.append('photo', fileInput.files[0]);
-      const res = await fetch(`/api/sessions/${currentSession.id}/audit`, { method: 'POST', body: formData });
-      const data = await res.json(); btn.removeAttribute('aria-busy');
-      if (!res.ok) return alert('שגיאה: ' + data.detail);
+    // --- עזרים למשימות רקע ---
+    function setBusy(btn, busy, labelBusy, labelIdle) {
+      btn.disabled = busy;
+      if (busy) btn.setAttribute('aria-busy', 'true');
+      else btn.removeAttribute('aria-busy');
+      btn.innerText = busy ? labelBusy : labelIdle;
+    }
 
+    async function pollJob(jobId, { intervalMs = 700, maxMs = 180000, onTick } = {}) {
+      const started = Date.now();
+      while (true) {
+        const res = await fetch(`/api/jobs/${jobId}`);
+        const job = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(job.detail || `שגיאת שרת (${res.status})`);
+        if (job.status === 'done') return job.result;
+        if (job.status === 'error') throw new Error(job.error || 'שגיאה לא ידועה');
+        if (Date.now() - started > maxMs) throw new Error('המשימה חרגה מזמן ההמתנה.');
+        if (onTick) onTick(Math.round((Date.now() - started) / 1000));
+        await new Promise(r => setTimeout(r, intervalMs));
+      }
+    }
+
+    function showAuditResult(data) {
+      if (!data || data.ai_headcount === undefined) {
+        throw new Error('השרת החזיר מבנה נתונים לא תקין — ודא ש-attendance_service.py ו-facade.py מעודכנים.');
+      }
       document.getElementById('audit-result').style.display = 'block';
       document.getElementById('final-headcount').value = data.ai_headcount;
       const colors = { NONE: 'green', LOW: '#0284c7', MEDIUM: '#d97706', HIGH: 'crimson' };
@@ -244,6 +282,34 @@
       badge.innerText = `דרגת חשד: ${data.level} | AI: ${data.ai_headcount} | נרשמו: ${data.registered_count} (פער: ${data.delta})`;
       document.getElementById('suspicion-explanation').innerText = data.explanation;
       renderStudentLevels(data.students || []);
+    }
+
+    // --- ספירת ראשים ודרגות חשד ---
+    async function runVisionAudit() {
+      const fileInput = document.getElementById('class-photo');
+      if (!fileInput.files.length) return alert('בחר תמונה.');
+      if (!currentSession) return alert('פתח רישום נוכחות קודם.');
+
+      const btn = document.getElementById('vision-btn');
+      const IDLE = 'ספור ראשים וחשב דרגת חשד';
+      setBusy(btn, true, 'סופר... 0 שניות', IDLE);
+
+      try {
+        const formData = new FormData();
+        formData.append('photo', fileInput.files[0]);
+        const res = await fetch(`/api/sessions/${currentSession.id}/audit`, { method: 'POST', body: formData });
+        const start = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(start.detail || `שגיאת שרת (${res.status})`);
+
+        const data = await pollJob(start.job_id, {
+          onTick: s => { btn.innerText = `סופר... ${s} שניות`; }
+        });
+        showAuditResult(data);
+      } catch (err) {
+        alert('❌ ' + err.message);
+      } finally {
+        setBusy(btn, false, '', IDLE);
+      }
     }
 
     function renderStudentLevels(students) {
@@ -284,13 +350,28 @@
         </div>`;
     }
 
-    async function closeSession() {
+         async function closeSession() {
       const count = document.getElementById('final-headcount').value || 0;
       const formData = new FormData(); formData.append('final_headcount', count);
       const res = await fetch(`/api/sessions/${currentSession.id}/close`, { method: 'POST', body: formData });
+
+      if (!res.ok) {
+          alert('שגיאה בסגירת הרישום.');
+          return;
+      }
+
       currentSession = await res.json();
       document.getElementById('session-status-badge').innerText = `סטטוס: ${currentSession.status}`;
-      alert('הרישום נסגר.');
+
+      // הורדה שקטה של הקובץ
+      const a = document.createElement('a');
+      a.href = `/api/sessions/${currentSession.id}/export`;
+      a.download = '';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+
+      alert('הרישום נסגר. הקובץ (כולל התמונה) מורד כעת.');
     }
 
     async function createPoll() {
@@ -332,29 +413,40 @@
         });
     }
 
+    // --- סיכום שיעור ---
     async function summarize() {
-        const file = document.getElementById('summary-file').files[0];
-        const formData = new FormData(); formData.append('session_id', currentSession.id);
-        if (file) formData.append('file', file);
+      if (!currentSession) return alert('פתח רישום נוכחות קודם.');
+      const file = document.getElementById('summary-file').files[0];
 
-        alert('מייצר סיכום... אנא המתן (עשוי לקחת מספר שניות)');
+      const formData = new FormData();
+      formData.append('session_id', currentSession.id);
+      if (file) formData.append('file', file);
 
-        try {
-            const res = await fetch('/api/summarize', { method: 'POST', body: formData });
-            const data = await res.json();
+      const btn = document.getElementById('summary-btn');
+      const IDLE = 'צור סיכום';
+      setBusy(btn, true, 'מכין סיכום... 0 שניות', IDLE);
 
-            if (!res.ok) throw new Error(data.detail || 'שגיאה ביצירת הסיכום');
-            if (!data.summary) throw new Error('השרת לא החזיר סיכום.');
+      try {
+        const res = await fetch('/api/summarize', { method: 'POST', body: formData });
+        const start = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(start.detail || `שגיאת שרת (${res.status})`);
 
-            const blob = new Blob([data.summary], { type: 'text/markdown' });
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `summary_${currentSession.id}.md`;
-            a.click();
-        } catch (error) {
-            alert('❌ שגיאה: ' + error.message);
-        }
+        const data = await pollJob(start.job_id, {
+          intervalMs: 3000,
+          onTick: s => { btn.innerText = `מסכם... ${s} שניות`; }
+        });
+        if (!data.summary) throw new Error('השרת לא החזיר סיכום.');
+
+        const blob = new Blob([data.summary], { type: 'text/markdown' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `summary_${currentSession.id}.md`;
+        a.click();
+      } catch (err) {
+        alert('❌ שגיאה: ' + err.message);
+      } finally {
+        setBusy(btn, false, '', IDLE);
+      }
     }
 
     async function reviewHomework() {

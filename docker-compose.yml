@@ -42,11 +42,12 @@ services:
   tunnel:
     image: cloudflare/cloudflared:latest
     container_name: class_tunnel
-    command: tunnel --no-autoupdate --logfile /shared/tunnel.log --url http://proxy:80
+    command: tunnel --no-autoupdate --protocol http2 --logfile /shared/tunnel.log --url http://proxy:80
     volumes:
       - ./tunnel_logs:/shared
     depends_on:
       - proxy
+    restart: unless-stopped
 
 volumes:
   pb_data:

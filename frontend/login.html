@@ -21,7 +21,6 @@
         <label for="password">סיסמה</label>
         <input type="password" id="password" name="password" required>
 
-        <!-- השדה הזה יופיע רק אם המשתמש קיים והמערכת צריכה את הסיסמה הישנה -->
         <div id="old-password-container" style="display: none; margin-top: 1rem; padding: 1rem; background: #fff3cd; border-radius: 5px;">
           <label for="old_password" style="color: #856404;"><strong>המשתמש כבר קיים!</strong> הזן סיסמה ישנה כדי לאשר את השינוי:</label>
           <input type="password" id="old_password" name="old_password" placeholder="הסיסמה הישנה שלך">
@@ -45,7 +44,6 @@
       const errorBox = document.getElementById('error-msg');
       const oldPassContainer = document.getElementById('old-password-container');
 
-      // איפוס הודעות
       errorBox.style.display = 'none';
       btn.setAttribute('aria-busy', 'true');
       loginBtn.setAttribute('aria-busy', 'true');
@@ -54,7 +52,14 @@
 
       try {
         const res = await fetch(endpoint, { method: 'POST', body: formData });
-        const data = await res.json();
+
+        let data;
+        try {
+            data = await res.json();
+        } catch (e) {
+            // אם השרת לא מחזיר JSON, סימן שהוא קרס
+            throw new Error(`שגיאת שרת (${res.status}). ייתכן שהשרת קרס. בדוק את הלוגים בטרמינל.`);
+        }
 
         if (res.ok) {
           localStorage.setItem('pb_auth', data.token);
@@ -66,7 +71,6 @@
         errorBox.style.display = 'block';
         errorBox.innerText = `❌ ${err.message}`;
 
-        // אם השגיאה היא שהמשתמש קיים, הצג את שדה הסיסמה הישנה
         if (err.message.includes("המשתמש כבר קיים")) {
           oldPassContainer.style.display = 'block';
         }
@@ -76,7 +80,6 @@
       }
     }
 
-    // לחיצה על "הרשמה / עדכון" תפעיל את הפונקציה של ה-Sign Up
     document.getElementById('login-form').addEventListener('submit', (e) => {
       e.preventDefault();
       submitForm('/api/auth/signup');

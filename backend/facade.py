@@ -14,10 +14,12 @@ class SmartClassFacade:
 
     def get_public_tunnel_url(self) -> str | None:
         log_path = "/shared/tunnel.log"
-        if not os.path.exists(log_path): return None
+        if not os.path.exists(log_path):
+            return None
         with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
             content = f.read()
-        matches = re.findall(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com", content)
+        latest_run = content.split("Requesting new quick Tunnel")[-1]
+        matches = re.findall(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com", latest_run)
         return matches[-1] if matches else None
 
     @classmethod

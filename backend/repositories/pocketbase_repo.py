@@ -4,20 +4,19 @@ from models.exceptions import ExternalServiceError
 
 
 class PocketBaseRepository(IDataRepository):
-    """מימוש קונקרטי של IDataRepository מול PocketBase REST API."""
-
     def __init__(self, base_url: str, admin_email: str, admin_password: str):
         self.base_url = base_url.rstrip("/")
         self.admin_email = admin_email
         self.admin_password = admin_password
         self._token: str | None = None
+        self._session = requests.Session()
 
     def _authenticate(self) -> str:
         try:
-            res = requests.post(
+            res = self._session.post(
                 f"{self.base_url}/api/collections/_superusers/auth-with-password",
                 json={"identity": self.admin_email, "password": self.admin_password},
-                timeout=10,
+                timeout=8,
             )
             res.raise_for_status()
             self._token = res.json()["token"]
@@ -32,16 +31,11 @@ class PocketBaseRepository(IDataRepository):
 
     def _request_with_retry(self, method: str, url: str, **kwargs) -> dict:
         try:
-            res = requests.request(method, url, headers=self._headers(), timeout=10, **kwargs)
+            res = self._session.request(method, url, headers=self._headers(), timeout=8, **kwargs)
             if res.status_code == 401:
                 self._authenticate()
-                res = requests.request(method, url, headers=self._headers(), timeout=10, **kwargs)
-            try:
-                res.raise_for_status()
-            except requests.exceptions.HTTPError as e:
-                # ידפיס את השגיאה האמיתית של PocketBase ללוגים
-                print(f"❌ PocketBase Error: {res.status_code} - {res.text}")
-                raise
+                res = self._session.request(method, url, headers=self._headers(), timeout=8, **kwargs)
+            res.raise_for_status()
             return res.json()
         except requests.RequestException as exc:
             raise ExternalServiceError(f"שגיאת תקשורת מול PocketBase: {exc}") from exc

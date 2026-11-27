@@ -8,9 +8,11 @@ from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from factory import SystemFactory
 from services.ai_service import AIService
+from services import job_store
 from models.exceptions import (
     DomainError, ExternalServiceError, InvalidCredentialsError, ResourceNotFoundError, SessionClosedError,
 )
+from urllib.parse import quote
 
 print("==================================================")
 print("🚀 !!! NEW MAIN.PY IS RUNNING !!! 🚀")
@@ -74,7 +76,7 @@ def bootstrap_database():
         "poll_votes": [
             {"name": "poll_id", "type": "text", "required": True},
             {"name": "student_id", "type": "text", "required": True},
-            {"name": "student_name", "type": "text", "required": False}, # הוספנו שם סטודנט
+            {"name": "student_name", "type": "text", "required": False},
             {"name": "answer", "type": "text", "required": True}
         ],
         "summaries": [
@@ -134,7 +136,7 @@ def lecturer_signup(email: str = Form(...), password: str = Form(...), old_passw
     if create_res.status_code == 200:
         auth_res = requests.post(f"{pb_url}/api/collections/_superusers/auth-with-password", json={"identity": email, "password": password})
         return {"token": auth_res.json()["token"], "status": "created"}
-    raise InvalidCredentialsError("המשתמש קיים. יש להזין סיסמה ישנה.") # פישוט
+    raise InvalidCredentialsError("המשתמש קיים. יש להזין סיסמה ישנה.")
 
 @app.get("/")
 def serve_login_page(): return FileResponse("/app/frontend/login.html")
@@ -173,24 +175,50 @@ def open_session(title: str = Form("שיעור OOP")): return facade.start_atten
 @app.post("/api/attendance/checkin")
 def check_in(student_name: str = Form(...), class_code: str = Form(...)): return facade.register_student_attendance(student_name, class_code)
 
+
 @app.post("/api/sessions/{session_id}/audit")
 async def headcount_audit(session_id: str, photo: UploadFile = File(...)):
     image_bytes = await photo.read()
-    return facade.run_attendance_audit(session_id, image_bytes, photo.content_type or "image/jpeg")
+    mime = photo.content_type or "image/jpeg"
 
+    # שמירת התמונה בדיסק המקומי של הפייתון
+    os.makedirs("/app/uploads", exist_ok=True)
+    with open(f"/app/uploads/{session_id}.jpg", "wb") as f:
+        f.write(image_bytes)
+
+    job_id = job_store.submit(facade.run_attendance_audit, session_id, image_bytes, mime)
+    return {"job_id": job_id, "status": "running"}
 @app.post("/api/sessions/{session_id}/override/{student_id}")
 def override_student(session_id: str, student_id: str): return facade.override_student_attendance(session_id, student_id)
 
 @app.post("/api/sessions/{session_id}/close")
 def close_session(session_id: str, final_headcount: int = Form(...)): return facade.finalize_attendance_session(session_id, final_headcount)
 
+
 @app.get("/api/sessions/{session_id}/export")
 def export_attendance(session_id: str):
     content, media_type, filename = facade.generate_attendance_report(session_id)
-    return StreamingResponse(iter([content]), media_type=media_type, headers={"Content-Disposition": f"attachment; filename={filename}"})
+
+    # קידוד שם הקובץ כך שיתמוך בעברית
+    encoded_filename = quote(filename)
+
+    return StreamingResponse(
+        iter([content]),
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
+        }
+    )
 
 @app.get("/api/public-url")
 def get_public_url(): return {"url": facade.get_public_tunnel_url()}
+
+@app.get("/api/jobs/{job_id}")
+def get_job(job_id: str):
+    job = job_store.get(job_id)
+    if job is None:
+        raise ResourceNotFoundError("המשימה לא נמצאה. ייתכן שהשרת הופעל מחדש.")
+    return job
 
 @app.post("/api/messages")
 def post_message(session_id: str = Form(...), student_id: str = Form(...), student_name: str = Form(...), text: str = Form(...)):
@@ -208,19 +236,26 @@ def get_poll(session_id: str): return {"poll": facade.get_active_poll(session_id
 def vote(poll_id: str = Form(...), student_id: str = Form(...), session_id: str = Form(...), answer: str = Form(...), student_name: str = Form(...)):
     return facade.vote_in_poll(poll_id, student_id, session_id, answer, student_name)
 
-# נתיב חדש לתוצאות סקר
 @app.get("/api/polls/{poll_id}/results")
 def get_poll_results(poll_id: str): return {"results": facade.get_poll_results(poll_id)}
 
-@app.post("/api/summarize")
-async def summarize_lecture(session_id: str = Form(...), text: str = Form(""), file: UploadFile = File(None)):
-    if file:
-        content = await file.read()
-        summary = ai_service.summarize_content("", is_file=True, file_bytes=content, mime_type=file.content_type)
-    else:
-        summary = ai_service.summarize_content(text)
+def _summary_job(session_id: str, file_bytes: bytes, mime_type: str) -> dict:
+    summary = ai_service.summarize_content("", is_file=True, file_bytes=file_bytes, mime_type=mime_type)
     facade._attendance.repo.create_record("summaries", {"session_id": session_id, "content": summary})
     return {"summary": summary}
+
+@app.post("/api/summarize")
+async def summarize_lecture(session_id: str = Form(...), text: str = Form(""), file: UploadFile = File(None)):
+    if file is not None:
+        content = await file.read()
+        mime = file.content_type or "video/mp4"
+    else:
+        content = text.encode("utf-8")
+        mime = "text/plain"
+    if not content:
+        raise DomainError("לא סופק קובץ או טקסט לסיכום.")
+    job_id = job_store.submit(_summary_job, session_id, content, mime)
+    return {"job_id": job_id, "status": "running"}
 
 @app.post("/api/review-homework")
 async def review_homework(file: UploadFile = File(...)):

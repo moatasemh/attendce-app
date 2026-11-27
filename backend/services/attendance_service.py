@@ -235,15 +235,22 @@ class AttendanceService:
         })
         return self._parse_session(updated)
 
-    def export_attendance(self, session_id: str) -> tuple[str, str, str]:
+    def export_attendance(self, session_id: str) -> tuple[bytes, str, str]:
         students = self.list_students()
         records_raw = self.repo.get_records("attendance", f'session_id="{session_id}"')
         records = [self._parse_attendance(r) for r in records_raw]
 
-        content = self.export_strategy.export(students, records)
-        filename = f"attendance_{session_id}.{self.export_strategy.file_extension}"
-        return content, self.export_strategy.media_type, filename
+        content = self.export_strategy.export(students, records, session_id=session_id)
 
+        # שליפת שם השיעור
+        session_record = self.repo.get_records("sessions", f'id="{session_id}"')
+        title = session_record[0].get("title", "שיעור") if session_record else "שיעור"
+
+        # ניקוי תווים לא חוקיים משם הקובץ
+        safe_title = "".join([c for c in title if c.isalpha() or c.isdigit() or c in (' ', '-', '_')]).strip()
+
+        filename = f"נוכחות_{safe_title}.{self.export_strategy.file_extension}"
+        return content, self.export_strategy.media_type, filename
     # ==========================================
     # פיצ'ר 2: הודעות ותגובות
     # ==========================================

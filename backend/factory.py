@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 from facade import SmartClassFacade
 from repositories.pocketbase_repo import PocketBaseRepository
 from services.attendance_service import AttendanceService
-from strategies.export_strategy import CsvExportStrategy
+from strategies.export_strategy import ExcelExportStrategy
 from strategies.suspicion_strategy import SmartRatioSuspicionStrategy
 from strategies.vision_strategy import GeminiVisionStrategy, MockHeadcountStrategy
 from services.github_client import GitHubClient
@@ -32,7 +32,7 @@ class SystemFactory:
         )
 
         suspicion_strategy = SmartRatioSuspicionStrategy()
-        export_strategy = CsvExportStrategy()
+        export_strategy =  export_strategy = ExcelExportStrategy()
 
         attendance_service = AttendanceService(
             repo=repo,
