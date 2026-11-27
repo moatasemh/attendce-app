@@ -1,4 +1,3 @@
-
 # Smart Classroom — Web-Based Teaching Tool
 
 **Course:** Introduction to Software Engineering (OOP / OOD) — Ariel University  
@@ -47,10 +46,10 @@ The system runs as a containerized microservices stack orchestrated with **Docke
 * **Public Connectivity (`Cloudflare Tunnel`):** Exposes the local server over HTTPS (`trycloudflare.com`) so students can connect immediately over cellular data (4G/5G) without university Wi-Fi isolation issues.
 
 ### Applied OOP & SOLID Design Patterns
-* **Facade Pattern (`backend/facade.py`):** `SmartClassroomFacade` exposes a clean, unified interface to the HTTP layer, hiding the complexity of repositories, AI services, and strategy orchestration.
-* **Factory Pattern (`backend/factory.py`):** `ComponentFactory` centralizes object creation and dependency wiring across the application.
-* **Strategy Pattern (`backend/strategies/`):** Encapsulates interchangeable algorithms behind abstract interfaces (`VisionStrategy`, `SuspicionStrategy`, `ExportStrategy`, `SimilarityStrategy`).
-* **Repository Pattern (`backend/repositories/`):** Decouples business logic from PocketBase persistence details via `interfaces/repository.py`.
+* **Facade Pattern (`backend/facade.py`):** `SmartClassFacade` exposes a clean, unified interface to the HTTP layer, hiding the complexity of repositories, AI services, and strategy orchestration.
+* **Factory Pattern (`backend/factory.py`):** `SystemFactory` centralizes object creation and dependency wiring across the application via `bootstrap()`.
+* **Strategy Pattern (`backend/strategies/` & `backend/interfaces/strategies.py`):** Encapsulates interchangeable algorithms behind abstract interfaces (`IHeadcountStrategy`, `ISuspicionStrategy`, `IExportStrategy`, `ISimilarityStrategy`).
+* **Repository Pattern (`backend/repositories/`):** Decouples business logic from PocketBase persistence details via `IDataRepository` (`backend/interfaces/repository.py`).
 
 ---
 
@@ -60,26 +59,26 @@ The system runs as a containerized microservices stack orchestrated with **Docke
 oop2/
 ├── backend/
 │   ├── interfaces/                 # Abstract base classes & contracts (SOLID DIP)
-│   │   ├── repository.py           # Abstract persistence repository interface
-│   │   └── strategies.py           # Abstract interfaces for Vision, Suspicion, Export & Similarity
+│   │   ├── repository.py           # IDataRepository persistence interface
+│   │   └── strategies.py           # IHeadcountStrategy, ISuspicionStrategy, IExportStrategy
 │   ├── models/                     # Core domain entities & custom exceptions
-│   │   ├── domain.py               # Data models (Session, Student, Attendance, Poll, Message)
-│   │   └── exceptions.py           # Domain and infrastructure exception hierarchy
+│   │   ├── domain.py               # SuspicionLevel, Student, ClassSession, AttendanceRecord, SuspicionReport
+│   │   └── exceptions.py           # DomainError hierarchy
 │   ├── repositories/               # Data access implementations
-│   │   └── pocketbase_repo.py      # PocketBase REST API persistence implementation
+│   │   └── pocketbase_repo.py      # PocketBaseRepository REST API persistence
 │   ├── services/                   # Core business logic & external integrations
-│   │   ├── attendance_service.py   # Session lifecycle, check-in, polls, live Q&A & audit logic
-│   │   ├── ai_service.py           # Google Gemini integration for video summary & homework review
-│   │   ├── repo_comparison_service.py # CSV repository ingestion & similarity orchestration
-│   │   ├── github_client.py        # Authenticated GitHub API client with rate-limit handling
-│   │   └── job_store.py            # Non-blocking background task store for AI operations
+│   │   ├── attendance_service.py   # AttendanceService & AuditResult
+│   │   ├── ai_service.py           # AIService (Gemini video summary & homework review)
+│   │   ├── repo_comparison_service.py # RepoComparisonService (CSV ingestion & similarity)
+│   │   ├── github_client.py        # GitHubClient (authenticated GitHub API wrapper)
+│   │   └── job_store.py            # Non-blocking background worker queue
 │   ├── strategies/                 # Concrete Strategy Pattern implementations
-│   │   ├── vision_strategy.py      # Classroom photo headcount using Gemini Vision
-│   │   ├── suspicion_strategy.py   # Class & per-student attendance suspicion scoring
-│   │   ├── export_strategy.py      # Attendance spreadsheet (CSV/Excel) generator
-│   │   └── similarity_strategy.py  # Structural code fingerprinting & similarity calculator
-│   ├── facade.py                   # SmartClassroomFacade (unified backend entry point)
-│   ├── factory.py                  # ComponentFactory (dependency injection & wiring)
+│   │   ├── vision_strategy.py      # GeminiVisionStrategy & MockHeadcountStrategy
+│   │   ├── suspicion_strategy.py   # SmartRatioSuspicionStrategy
+│   │   ├── export_strategy.py      # ExcelExportStrategy
+│   │   └── similarity_strategy.py  # ISimilarityStrategy & TokenShingleSimilarity
+│   ├── facade.py                   # SmartClassFacade (unified backend entry point)
+│   ├── factory.py                  # SystemFactory (dependency injection & bootstrap)
 │   ├── main.py                     # FastAPI routes, startup auto-migration & static serving
 │   ├── Dockerfile                  # Backend container image definition
 │   └── requirements.txt            # Python dependencies
@@ -100,6 +99,23 @@ oop2/
 ├── tests/                          # Automated unit & integration test suite (pytest)
 ├── Caddyfile                       # Reverse proxy routing rules
 ├── docker-compose.yml              # Multi-container orchestration
+└── README.md                       # Project overview, setup & conclusions
+```
+
+### `backend/requirements.txt`
+```text
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+google-genai==2.9.0
+requests==2.32.3
+python-dotenv==1.0.1
+python-multipart==0.0.20
+Pillow==10.4.0
+imageio-ffmpeg==0.5.1
+openpyxl==3.1.2
+pytest==8.0.0
+pytest-mock==3.12.0
+httpx>=0.28.1
 ```
 
 ---
@@ -149,7 +165,7 @@ docker compose up -d
 
 ### 4. Running Automated Tests
 ```bash
-pytest -v
+docker exec -it class_python_backend pytest /app/tests -v
 ```
 
 ---
@@ -158,4 +174,4 @@ pytest -v
 
 * **Concurrency & Live Demo Readiness:** Load testing with 50 concurrent simulated students (`ThreadPoolExecutor`) confirmed that simultaneous check-ins (`POST /api/attendance/checkin`) and live question submissions (`POST /api/messages`) complete within ~1–2 seconds without SQLite locking errors, updating the lecturer dashboard in real time via WebSockets.
 * **AI Performance & Latency:** Offloading Gemini Vision headcounts and video summarization to an asynchronous background job store (`job_store.py`) eliminated HTTP timeouts and delivered headcount audits in ~1–3 seconds.
-* **Architecture Takeaway:** Combining a strict OOP backend (Facade, Factory, Strategy, Repository) with lightweight KISS frontend templates enabled rapid iteration ("vibe coding" + structured engineering) while keeping every core component isolated and unit-testable.
+* **Architecture Takeaway:** Combining a strict OOP backend (`SmartClassFacade`, `SystemFactory`, Strategy & Repository patterns) with lightweight KISS frontend templates enabled rapid iteration ("vibe coding" + structured engineering) while keeping every core component isolated and unit-testable.
