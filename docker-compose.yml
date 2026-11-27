@@ -1,0 +1,53 @@
+services:
+  pocketbase:
+    image: alpine:latest
+    container_name: class_pocketbase
+    command: >
+      sh -c "apk add --no-cache wget unzip &&
+             wget -q https://github.com/pocketbase/pocketbase/releases/download/v0.25.9/pocketbase_0.25.9_linux_amd64.zip -O /tmp/pb.zip &&
+             unzip -oq /tmp/pb.zip -d /pb &&
+             /pb/pocketbase superuser create admin@example.com 1234567890 --dir=/pb/pb_data || true &&
+             /pb/pocketbase serve --http=0.0.0.0:8090 --dir=/pb/pb_data"
+    volumes:
+      - pb_data:/pb/pb_data
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    container_name: class_python_backend
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./backend:/app
+      - ./frontend:/app/frontend
+      - ./demo_assets:/app/demo_assets
+      - ./tunnel_logs:/shared:ro
+    depends_on:
+      - pocketbase
+    restart: unless-stopped
+
+  proxy:
+    image: caddy:alpine
+    container_name: class_proxy
+    ports:
+      - "8080:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+    depends_on:
+      - backend
+      - pocketbase
+
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: class_tunnel
+    command: tunnel --no-autoupdate --protocol http2 --logfile /shared/tunnel.log --url http://proxy:80
+    volumes:
+      - ./tunnel_logs:/shared
+    depends_on:
+      - proxy
+    restart: unless-stopped
+
+volumes:
+  pb_data:

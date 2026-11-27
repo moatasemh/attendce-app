@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>כניסת מרצה — מערכת שיעור חכם</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+</head>
+<body>
+  <main class="container" style="max-width: 400px; margin-top: 10vh;">
+    <article>
+      <header style="text-align: center;">
+        <h2 style="margin-bottom: 0;">כניסת מרצה</h2>
+        <p style="color: gray; font-size: 0.9rem;">התחבר או צור משתמש חדש</p>
+      </header>
+
+      <form id="login-form">
+        <label for="email">אימייל</label>
+        <input type="email" id="email" name="email" value="admin@example.com" required>
+
+        <label for="password">סיסמה</label>
+        <input type="password" id="password" name="password" required>
+
+        <div id="old-password-container" style="display: none; margin-top: 1rem; padding: 1rem; background: #fff3cd; border-radius: 5px;">
+          <label for="old_password" style="color: #856404;"><strong>המשתמש כבר קיים!</strong> הזן סיסמה ישנה כדי לאשר את השינוי:</label>
+          <input type="password" id="old_password" name="old_password" placeholder="הסיסמה הישנה שלך">
+        </div>
+
+        <div style="display: flex; gap: 1rem; margin-top: 1rem;">
+          <button type="button" id="login-btn" onclick="submitForm('/api/auth/login')" style="flex: 1;">התחבר</button>
+          <button type="submit" id="signup-btn" style="flex: 1;" class="secondary">הרשמה / עדכון</button>
+        </div>
+      </form>
+
+      <footer id="error-msg" style="display:none; color: crimson; margin-top: 1rem; font-weight: bold; text-align: center;"></footer>
+    </article>
+  </main>
+
+  <script>
+    async function submitForm(endpoint) {
+      const form = document.getElementById('login-form');
+      const btn = document.getElementById('signup-btn');
+      const loginBtn = document.getElementById('login-btn');
+      const errorBox = document.getElementById('error-msg');
+      const oldPassContainer = document.getElementById('old-password-container');
+
+      errorBox.style.display = 'none';
+      btn.setAttribute('aria-busy', 'true');
+      loginBtn.setAttribute('aria-busy', 'true');
+
+      const formData = new FormData(form);
+
+      try {
+        const res = await fetch(endpoint, { method: 'POST', body: formData });
+
+        let data;
+        try {
+            data = await res.json();
+        } catch (e) {
+            // אם השרת לא מחזיר JSON, סימן שהוא קרס
+            throw new Error(`שגיאת שרת (${res.status}). ייתכן שהשרת קרס. בדוק את הלוגים בטרמינל.`);
+        }
+
+        if (res.ok) {
+          localStorage.setItem('pb_auth', data.token);
+          window.location.href = '/lecturer';
+        } else {
+          throw new Error(data.detail || 'שגיאה');
+        }
+      } catch (err) {
+        errorBox.style.display = 'block';
+        errorBox.innerText = `❌ ${err.message}`;
+
+        if (err.message.includes("המשתמש כבר קיים")) {
+          oldPassContainer.style.display = 'block';
+        }
+      } finally {
+        btn.removeAttribute('aria-busy');
+        loginBtn.removeAttribute('aria-busy');
+      }
+    }
+
+    document.getElementById('login-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      submitForm('/api/auth/signup');
+    });
+  </script>
+</body>
+</html>
